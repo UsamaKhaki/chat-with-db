@@ -170,13 +170,11 @@ describe("answerQuestion", () => {
   });
 
   it("keeps internal error detail out of the response", async () => {
-    const execute = vi
-      .fn()
-      .mockRejectedValue(
-        Object.assign(new Error("password authentication failed"), {
-          code: "28P01",
-        }),
-      );
+    const execute = vi.fn().mockRejectedValue(
+      Object.assign(new Error("password authentication failed"), {
+        code: "28P01",
+      }),
+    );
     const { model } = scriptedModel({
       generate_sql: [sqlReply("SELECT count(*) FROM orders")],
     });
