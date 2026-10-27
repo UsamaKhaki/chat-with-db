@@ -93,16 +93,26 @@ export async function retrieveContext(
   };
   if (!retrieval.embedder) return everything;
 
-  const vector = toVectorLiteral(await retrieval.embedder.embedQuery(question));
-  const { rows } = await retrieval.pool.query<{
-    kind: "table" | "example";
-    metadata: Record<string, string>;
-  }>(
-    `(SELECT kind, metadata FROM rag.documents WHERE kind = 'table' ORDER BY embedding <=> $1::vector LIMIT $2)
-     UNION ALL
-     (SELECT kind, metadata FROM rag.documents WHERE kind = 'example' ORDER BY embedding <=> $1::vector LIMIT $3)`,
-    [vector, TABLE_MATCHES, EXAMPLE_MATCHES],
-  );
+  let rows: { kind: "table" | "example"; metadata: Record<string, string> }[];
+  try {
+    const vector = toVectorLiteral(
+      await retrieval.embedder.embedQuery(question),
+    );
+    ({ rows } = await retrieval.pool.query(
+      `(SELECT kind, metadata FROM rag.documents WHERE kind = 'table' ORDER BY embedding <=> $1::vector LIMIT $2)
+       UNION ALL
+       (SELECT kind, metadata FROM rag.documents WHERE kind = 'example' ORDER BY embedding <=> $1::vector LIMIT $3)`,
+      [vector, TABLE_MATCHES, EXAMPLE_MATCHES],
+    ));
+  } catch (error) {
+    // Retrieval only narrows the prompt, so an embeddings outage should
+    // degrade answers to the full-schema path rather than fail them.
+    console.warn(
+      "retrieval failed, using the full schema:",
+      error instanceof Error ? error.message : error,
+    );
+    return everything;
+  }
   if (rows.length === 0) return everything;
 
   const tableNames = new Set(
