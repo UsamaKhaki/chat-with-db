@@ -1,12 +1,12 @@
 # Demo
 
-`demo.webm` (31 seconds, 1280x800, no audio) is a recording of the real app running locally at `http://localhost:6601` against the seeded docker-compose database.
+`demo.webm` (35 seconds, 1280x800, no audio) is a recording of the real app (a local production build, `next start`) against the seeded docker-compose database. It opens a table in the schema panel, asks for monthly revenue and steps through the Chart, Table and SQL tabs, then asks for customers per country, a blocked delete, and a query that hits the row limit.
 
 ## How it was recorded
 
 No model API key was available when it was recorded, so the language model was the one part replaced. Each question was answered with reference SQL (the same kind of queries as `evals/cases.json`), passed through the real pipeline (validator, read-only executor, chart picker) against the seeded database, and the resulting `/api/ask` responses were served to the page. That is why the summary line reads "Summary not generated". Everything else on screen, including the chart, table, SQL, the blocked write and the row-limit notice, is real output.
 
-The screenshots in `docs/screenshots/` were captured the same way, except `06-no-model-configured.png`, which is the unmodified app with no key configured.
+The screenshots in `docs/screenshots/` were captured the same way, except `06-no-model-configured.png`, which is the unmodified app with no key configured. The timings in the query receipt are real, but they only cover Postgres and the stand-in model, so they are much shorter than a real run with model calls.
 
 ## Script for a recording with a real model
 

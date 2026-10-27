@@ -10,7 +10,7 @@ Text-to-SQL demos are easy to build and hard to trust. The model can write a que
 
 It runs locally against a seeded e-commerce database. It is not deployed anywhere public.
 
-**Demo video:** [docs/demo/demo.webm](docs/demo/demo.webm) (31 s). The screenshots and video were recorded without a model API key, using reference SQL in place of the model, so the summary line is a placeholder; see [docs/demo](docs/demo/README.md) for exactly what was and was not real.
+**Demo video:** [docs/demo/demo.webm](docs/demo/demo.webm) (35 s). The screenshots and video were recorded without a model API key, using reference SQL in place of the model, so the summary line is a placeholder; see [docs/demo](docs/demo/README.md) for exactly what was and was not real.
 
 ## What it does
 
@@ -29,23 +29,25 @@ It is aimed at people who know what they want to ask but not how to write the jo
 
 ## Features
 
-|                                           |                                                                                                                                         |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| **Answer, SQL, table and chart together** | The summary is backed by the exact query and rows. Numbers and dates are formatted, and results that hit the row limit say so.          |
-| **Read-only by construction**             | Three independent layers (below). A request like "Delete every cancelled order" is blocked and the rejected query is shown.             |
-| **Self-repair**                           | Unknown columns, syntax errors and disallowed functions are fed back to the model once. Safety rejections and timeouts are not retried. |
-| **Claude or OpenAI**                      | One `LanguageModel` interface over LangChain. The provider is chosen by env vars.                                                       |
-| **Schema-aware retrieval**                | Table descriptions and curated example queries are embedded in pgvector. With no embeddings key it falls back to the full schema.       |
-| **Execution-accuracy evals**              | 18 questions with reference SQL plus 3 that must be refused, scored by comparing result rows, not SQL text.                             |
-| **No raw errors in the browser**          | Every failure maps to a typed code and a fixed message. Database and provider errors stay in server logs.                               |
+|                                           |                                                                                                                                                                                                                   |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Answer, SQL, table and chart together** | The summary is backed by the exact query and rows, in Chart, Table and SQL tabs, with CSV download. Results that hit the row limit say so.                                                                        |
+| **A receipt for every answer**            | A strip above each answer shows what happened: whether retrieval matched tables or used the full schema, whether the SQL was rewritten, that the checks passed, and the row count and query time from the server. |
+| **Read-only by construction**             | Three independent layers (below). A request like "Delete every cancelled order" is blocked and the rejected query is shown.                                                                                       |
+| **Self-repair**                           | Unknown columns, syntax errors and disallowed functions are fed back to the model once. Safety rejections and timeouts are not retried.                                                                           |
+| **Claude or OpenAI**                      | One `LanguageModel` interface over LangChain. The provider is chosen by env vars.                                                                                                                                 |
+| **Schema-aware retrieval**                | Table descriptions and curated example queries are embedded in pgvector. With no embeddings key it falls back to the full schema.                                                                                 |
+| **Execution-accuracy evals**              | 18 questions with reference SQL plus 3 that must be refused, scored by comparing result rows, not SQL text.                                                                                                       |
+| **No raw errors in the browser**          | Every failure maps to a typed code and a fixed message. Database and provider errors stay in server logs.                                                                                                         |
+| **Schema at hand**                        | The sidebar lists the tables and columns the read-only role can query (from `GET /api/schema`), plus this session's questions.                                                                                    |
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/03-bar-chart-table-sql.png" alt="Customers per country as a bar chart with table and SQL"></td>
+    <td><img src="docs/screenshots/03-bar-chart.png" alt="Customers per country as a bar chart, with the query receipt"></td>
     <td><img src="docs/screenshots/04-blocked-write.png" alt="A delete request blocked, with the rejected query shown"></td>
   </tr>
   <tr>
-    <td align="center">Category breakdown as bars, with the rows and SQL</td>
+    <td align="center">Category breakdown as bars, with the query receipt</td>
     <td align="center">A write request is blocked and the query is shown</td>
   </tr>
   <tr>
@@ -58,7 +60,7 @@ It is aimed at people who know what they want to ask but not how to write the jo
   </tr>
 </table>
 
-Light theme and mobile layout: [08-light-theme.png](docs/screenshots/08-light-theme.png), [07-mobile.png](docs/screenshots/07-mobile.png).
+More: [empty state](docs/screenshots/01-home.png), [SQL tab](docs/screenshots/09-sql-tab.png), [light theme](docs/screenshots/08-light-theme.png), mobile [home](docs/screenshots/07-mobile-home.png) and [answer](docs/screenshots/07-mobile-answer.png).
 
 ## Architecture
 
@@ -188,12 +190,18 @@ The shape of a successful response (`200`), with rows shortened:
   "meta": {
     "model": "anthropic:claude-sonnet-5-5",
     "retrieval": "vector",
-    "attempts": 1
+    "attempts": 1,
+    "queryMs": 14,
+    "totalMs": 2310
   }
 }
 ```
 
+`queryMs` is the time Postgres spent on the generated query; `totalMs` covers the whole pipeline, including model calls.
+
 A failure has `ok: false`, a `code` and a fixed `message`, plus the generated `sql` when there was one. Status codes: `400` bad input, `422` blocked, unanswerable or invalid query, `503` model or database unavailable or not configured, `504` timeout, `500` anything else. There is no authentication.
+
+`GET /api/schema` returns the tables and columns the read-only role can query (`{ schema, tables: [{ name, comment, columns: [{ name, type, references }] }] }`). The UI uses it for the sidebar; it reads from the same catalog as the validator's allow-list.
 
 ## Data model
 
@@ -222,8 +230,8 @@ db/                    schema, deterministic seed, rag store, roles, init script
 docs/                  screenshots and demo video
 evals/                 eval cases, comparator, runner
 scripts/               index-knowledge.ts
-src/app/               page and POST /api/ask
-src/components/        question form, answer, table, chart, SQL block
+src/app/               page, POST /api/ask and GET /api/schema
+src/components/        workspace shell, composer, answer entry, query receipt, result tabs
 src/lib/ask.ts         the pipeline (dependencies passed in)
 src/lib/ask-service.ts wires the pipeline to the real database and model
 src/lib/sql/           validator, executor, error codes
