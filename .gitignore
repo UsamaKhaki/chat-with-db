@@ -45,3 +45,14 @@ next-env.d.ts
 
 # eval reports
 /evals/results/
+
+# AI tooling files stay local
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+.cursor/
+.cursorrules
+.windsurfrules
+.github/copilot-instructions.md
+.aider*
