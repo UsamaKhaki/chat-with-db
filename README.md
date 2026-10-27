@@ -1,77 +1,152 @@
-# chat-with-db
+# Chat with DB
 
-Ask questions in plain English about a Postgres database and get an answer, the SQL that produced it, the result table and a chart.
+**Ask a Postgres database a question in plain English. Get an answer, the SQL behind it, the rows and a chart, with the query locked down so it can only read.**
 
-It runs against a seeded demo e-commerce database (customers, orders, order items, products, categories, reviews). Generated SQL goes through three independent safety layers before and during execution, and the SQL generation is measured with an execution-accuracy eval suite.
+![Next.js 16](https://img.shields.io/badge/Next.js-16-black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6) ![Postgres 18 + pgvector](https://img.shields.io/badge/Postgres_18-pgvector-336791) ![LangChain](https://img.shields.io/badge/LangChain-Claude_%7C_OpenAI-1c3c3c)
 
-## How it works
+![Monthly revenue answered as a line chart, table and SQL](docs/screenshots/02-line-chart.png)
 
+Text-to-SQL demos are easy to build and hard to trust. The model can write a query that deletes data, reads tables it should not, runs for minutes or returns a million rows. This project is a text-to-SQL app built around that problem. Every generated query is parsed, checked against an allow-list, run in a read-only transaction with a timeout and a row cap, and executed by a database role that cannot write even if every other check failed. The quality of the SQL itself is measured with an eval suite rather than assumed.
+
+It runs locally against a seeded e-commerce database. It is not deployed anywhere public.
+
+**Demo video:** [docs/demo/demo.webm](docs/demo/demo.webm) (31 s). The screenshots and video were recorded without a model API key, using reference SQL in place of the model, so the summary line is a placeholder; see [docs/demo](docs/demo/README.md) for exactly what was and was not real.
+
+## What it does
+
+A user types a question such as "What was the monthly revenue in 2025?". The app:
+
+1. finds the parts of the schema and the example queries most relevant to the question (pgvector)
+2. asks Claude or OpenAI for a single SQL query, using structured output
+3. validates the query with Postgres's own parser and an allow-list
+4. runs it as a read-only role, with a time limit and a row limit
+5. asks the model for a one to three sentence answer based on the returned rows
+6. picks a chart from the shape of the result (dates give a line, categories give bars)
+
+The SQL is always shown, so the answer can be checked rather than taken on faith. If the model writes a query that fails validation or errors in Postgres, it gets the reason and one chance to fix it.
+
+It is aimed at people who know what they want to ask but not how to write the join, and at engineers who want a reference for doing text-to-SQL safely.
+
+## Features
+
+|                                           |                                                                                                                                         |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **Answer, SQL, table and chart together** | The summary is backed by the exact query and rows. Numbers and dates are formatted, and results that hit the row limit say so.          |
+| **Read-only by construction**             | Three independent layers (below). A request like "Delete every cancelled order" is blocked and the rejected query is shown.             |
+| **Self-repair**                           | Unknown columns, syntax errors and disallowed functions are fed back to the model once. Safety rejections and timeouts are not retried. |
+| **Claude or OpenAI**                      | One `LanguageModel` interface over LangChain. The provider is chosen by env vars.                                                       |
+| **Schema-aware retrieval**                | Table descriptions and curated example queries are embedded in pgvector. With no embeddings key it falls back to the full schema.       |
+| **Execution-accuracy evals**              | 18 questions with reference SQL plus 3 that must be refused, scored by comparing result rows, not SQL text.                             |
+| **No raw errors in the browser**          | Every failure maps to a typed code and a fixed message. Database and provider errors stay in server logs.                               |
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/03-bar-chart-table-sql.png" alt="Customers per country as a bar chart with table and SQL"></td>
+    <td><img src="docs/screenshots/04-blocked-write.png" alt="A delete request blocked, with the rejected query shown"></td>
+  </tr>
+  <tr>
+    <td align="center">Category breakdown as bars, with the rows and SQL</td>
+    <td align="center">A write request is blocked and the query is shown</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/05-row-limit.png" alt="A 3000-row query cut off at 500 rows"></td>
+    <td><img src="docs/screenshots/06-no-model-configured.png" alt="Clear message when no model key is configured"></td>
+  </tr>
+  <tr>
+    <td align="center">Large results stop at the row limit and say so</td>
+    <td align="center">Configuration problems get a plain message</td>
+  </tr>
+</table>
+
+Light theme and mobile layout: [08-light-theme.png](docs/screenshots/08-light-theme.png), [07-mobile.png](docs/screenshots/07-mobile.png).
+
+## Architecture
+
+```mermaid
+flowchart LR
+  UI["Next.js page<br/>(client component)"] -->|POST /api/ask| Route["Route handler<br/>zod-validated"]
+  Route --> Pipeline["answerQuestion()<br/>src/lib/ask.ts"]
+  Pipeline -->|embed question| Embed["OpenAI embeddings<br/>(optional)"]
+  Pipeline -->|nearest docs| RAG[("rag.documents<br/>pgvector")]
+  Pipeline -->|structured output| LLM["Claude or OpenAI<br/>via LangChain"]
+  Pipeline --> Validator["validateSql()<br/>libpg-query + allow-list"]
+  Validator --> Executor["executeReadOnly()<br/>READ ONLY txn, timeout, cursor"]
+  Executor -->|chat_readonly role| Shop[("shop schema<br/>seeded e-commerce data")]
+  Pipeline --> Chart["pickChart()"]
 ```
-question
-  -> retrieve   pgvector finds the closest table docs and example queries
-  -> generate   Claude or OpenAI returns { answerable, sql, explanation } via structured output
-  -> validate   the real Postgres parser checks the SQL against an allow-list
-  -> execute    read-only role, READ ONLY transaction, statement timeout, row limit
-  -> summarise  the model writes a 1 to 3 sentence answer from the returned rows
-  -> chart      picked from the result's column types, not by the model
-```
 
-If validation or execution fails with a mistake the model can fix (unknown table or column, syntax error, a function that is not allowed), the reason is sent back and the model gets one more attempt. Safety rejections, timeouts and outages are not retried.
+The pipeline in `src/lib/ask.ts` does no I/O itself. The model, retrieval, validator and executor are passed in, which is what lets the unit tests drive it with a scripted fake model and lets the evals run it with the reference SQL. `src/lib/ask-service.ts` wires in the real database and model.
 
-Every failure ends as a typed code (`timeout`, `write_not_allowed`, `unanswerable`, `database_unavailable`, ...) with a fixed user-facing message. Raw database and provider errors are logged on the server and never sent to the browser.
+Two Postgres roles keep the halves apart: `chat_app` owns the `rag` schema used for retrieval, and `chat_readonly` runs generated SQL and can only read `shop`.
 
-## SQL safety
+### Decisions worth calling out
 
-The layers are independent, so a bug in one is caught by the next. Each has its own tests.
+- **Postgres's real parser, not a regex.** `libpg-query` is the Postgres parser compiled to WebAssembly, so the validator sees exactly what Postgres would. That catches data-modifying CTEs (`WITH x AS (DELETE ...) SELECT ...`), `SELECT INTO` and `FOR UPDATE`, which string checks miss.
+- **Allow-list functions instead of deny-listing.** Postgres has hundreds of built-ins, and some (`pg_sleep`, `pg_read_file`, `dblink`, `set_config`, `lo_import`) are dangerous. Only common aggregate, window, date, text and math functions pass.
+- **A cursor for the row limit.** Wrapping the query in `SELECT * FROM (...) LIMIT n` does not guarantee the inner `ORDER BY` survives. `DECLARE ... CURSOR` plus `FETCH n+1` keeps the query as written, stops Postgres early, tells the UI when the result was cut off, and only accepts `SELECT`/`VALUES`.
+- **The allow-list comes from the database.** Allowed tables are read from `information_schema` as the read-only role, which only lists what that role can access, so the validator and the grants cannot drift apart.
+- **Charts are chosen by rule, not by the model.** A deterministic picker is free, testable and cannot hallucinate a chart type. Numeric `id` columns are never plotted.
+- **Native structured output.** LangChain's `jsonSchema` method maps to each provider's structured-output API. Current Claude models reject forced tool calls, so the tool-calling route was not an option. Output is validated again with zod.
 
-| Layer         | What it does                                                                                                                                                                                                                                                                                                                                                                                                     | Where                     |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| Validator     | Parses with [libpg-query](https://github.com/constructive-io/libpg-query-node) (Postgres's own parser compiled to WebAssembly). Accepts exactly one `SELECT` (CTEs allowed). Rejects data-modifying CTEs, `SELECT INTO`, `FOR UPDATE`, any table outside the `shop` schema, and any function not on an allow-list (so `pg_sleep`, `pg_read_file`, `dblink`, `set_config`, `lo_import` and the rest are blocked). | `src/lib/sql/validate.ts` |
-| Executor      | Runs the query in `BEGIN READ ONLY` with `SET LOCAL statement_timeout`, through a cursor that fetches `limit + 1` rows. Postgres stops producing rows at the limit, the original `ORDER BY` is kept, and the UI is told when a result was cut off. A cursor also only accepts `SELECT`/`VALUES`.                                                                                                                 | `src/lib/sql/execute.ts`  |
-| Database role | Generated SQL runs as `chat_readonly`: `SELECT` on `shop` tables only, no access to the `rag` schema, no `CREATE`, `default_transaction_read_only = on`, and its own 5s statement timeout.                                                                                                                                                                                                                       | `db/roles.sql`            |
+## SQL safety layers
 
-The table allow-list is not hand-maintained: it is read from `information_schema` as the read-only role, which only lists objects that role has privileges on.
+| Layer         | What it enforces                                                                                                                                                                                        | Code                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| Validator     | One statement, `SELECT` only (CTEs allowed). No data-modifying CTEs, `SELECT INTO` or row locks. Tables only from `shop`, and only those the read-only role can see. Functions only from an allow-list. | `src/lib/sql/validate.ts` |
+| Executor      | `BEGIN READ ONLY`, `SET LOCAL statement_timeout`, a cursor fetching `limit + 1` rows, rollback in `finally`, and a broken connection is destroyed rather than returned to the pool.                     | `src/lib/sql/execute.ts`  |
+| Database role | `chat_readonly` has `SELECT` on `shop` only, no access to `rag`, no `CREATE`, `default_transaction_read_only = on` and a 5 s `statement_timeout`.                                                       | `db/roles.sql`            |
 
-## Stack
+The integration tests check the role on its own with the validator bypassed: an `INSERT` fails in a default transaction (read-only) and again inside `BEGIN READ WRITE` (no privilege).
 
-- Next.js 16 (App Router) and React 19, TypeScript in strict mode, Tailwind CSS 4, Recharts
-- LangChain (`@langchain/anthropic`, `@langchain/openai`) behind a single `LanguageModel` interface
-- Postgres 18 with pgvector 0.8, via `pg`
-- zod for env, request and model-output validation
-- Vitest, ESLint, Prettier, GitHub Actions
+## Tech stack
+
+| Area                | Used                                                                                                     |
+| ------------------- | -------------------------------------------------------------------------------------------------------- |
+| Frontend            | Next.js 16 App Router, React 19, Tailwind CSS 4, Recharts                                                |
+| Backend             | Next.js route handler, zod                                                                               |
+| AI                  | LangChain (`@langchain/anthropic`, `@langchain/openai`), Claude or OpenAI chat models, OpenAI embeddings |
+| Database            | Postgres 18 with pgvector 0.8 (Docker image `pgvector/pgvector:0.8.7-pg18`), `pg`, `libpg-query`         |
+| Testing and tooling | Vitest, ESLint, Prettier, TypeScript strict, tsx, GitHub Actions                                         |
 
 ## Getting started
 
-Requirements: Node 22.12 or newer (see `.nvmrc`), Docker, and an Anthropic or OpenAI API key.
+Requirements: Node 22.12 or newer (`.nvmrc`), Docker, and an Anthropic or OpenAI API key.
 
 ```bash
 npm install
-cp .env.example .env.local    # then add ANTHROPIC_API_KEY or OPENAI_API_KEY
-npm run db:up                 # Postgres + pgvector on localhost:5443, seeded on first start
-npm run index                 # optional: embeds schema docs for retrieval (needs OPENAI_API_KEY)
-npm run dev                   # http://localhost:6601
+cp .env.example .env.local
 ```
 
-The seed is deterministic (fixed random seed and fixed 2024 to 2025 dates), so every fresh database has identical rows and the eval answers stay stable. `npm run db:reset` drops the volume and reseeds.
+Add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to `.env.local`, then:
 
-### Environment variables
+```bash
+npm run db:up
+```
 
-| Name                     | Required            | Default                     | Purpose                                         |
-| ------------------------ | ------------------- | --------------------------- | ----------------------------------------------- |
-| `DATABASE_URL`           | yes                 |                             | `chat_app` role, used for the retrieval store   |
-| `READONLY_DATABASE_URL`  | yes                 |                             | `chat_readonly` role, used to run generated SQL |
-| `ANTHROPIC_API_KEY`      | one of the two keys |                             | Claude                                          |
-| `OPENAI_API_KEY`         | one of the two keys |                             | OpenAI chat, and embeddings for retrieval       |
-| `LLM_PROVIDER`           | no                  | Anthropic if its key is set | `anthropic` or `openai`                         |
-| `ANTHROPIC_MODEL`        | no                  | `claude-sonnet-5-5`         |                                                 |
-| `OPENAI_MODEL`           | no                  | `gpt-5-mini`                |                                                 |
-| `OPENAI_EMBEDDING_MODEL` | no                  | `text-embedding-3-small`    | must produce 1536 dimensions                    |
-| `QUERY_ROW_LIMIT`        | no                  | `500`                       | rows returned per question                      |
-| `QUERY_TIMEOUT_MS`       | no                  | `5000`                      | statement timeout per question                  |
+```bash
+npm run dev
+```
 
-Anthropic has no embeddings API. Without `OPENAI_API_KEY`, or before `npm run index` has run, retrieval falls back to putting the whole schema and every example in the prompt. That is fine for six tables; retrieval is there for schemas where it would not be.
+`npm run db:up` starts Postgres with pgvector on `localhost:5443` and seeds it on first start. The app runs on `http://localhost:6601`. Optionally run `npm run index` (needs `OPENAI_API_KEY`) to build the retrieval index.
 
-The passwords in `docker-compose.yml` and `.env.example` are defaults for the local container only.
+The seed uses a fixed random seed and fixed 2024 to 2025 dates, so every fresh database has identical rows: 500 customers, 80 products in 8 categories, 3,000 orders, 7,500 order lines and 1,200 reviews. `npm run db:reset` drops the volume and reseeds.
+
+### Configuration
+
+| Variable                 | Required         | Default                     | Purpose                                   |
+| ------------------------ | ---------------- | --------------------------- | ----------------------------------------- |
+| `DATABASE_URL`           | yes              |                             | `chat_app` role, retrieval store          |
+| `READONLY_DATABASE_URL`  | yes              |                             | `chat_readonly` role, runs generated SQL  |
+| `ANTHROPIC_API_KEY`      | one key required |                             | Claude                                    |
+| `OPENAI_API_KEY`         | one key required |                             | OpenAI chat, and embeddings for retrieval |
+| `LLM_PROVIDER`           | no               | Anthropic if its key is set | `anthropic` or `openai`                   |
+| `ANTHROPIC_MODEL`        | no               | `claude-sonnet-5-5`         |                                           |
+| `OPENAI_MODEL`           | no               | `gpt-5-mini`                |                                           |
+| `OPENAI_EMBEDDING_MODEL` | no               | `text-embedding-3-small`    | must produce 1536 dimensions              |
+| `QUERY_ROW_LIMIT`        | no               | `500`                       | rows returned per question                |
+| `QUERY_TIMEOUT_MS`       | no               | `5000`                      | statement timeout per question            |
+
+The passwords in `docker-compose.yml` and `.env.example` are for the local container only.
 
 ## Scripts
 
@@ -83,54 +158,105 @@ The passwords in `docker-compose.yml` and `.env.example` are defaults for the lo
 | `npm run test:integration`                    | tests against the docker-compose database      |
 | `npm run eval`                                | SQL-generation evals with the configured model |
 | `npm run eval -- --reference`                 | eval harness self-test, no API key needed      |
-| `npm run index`                               | builds the pgvector index                      |
+| `npm run index`                               | build the pgvector retrieval index             |
 | `npm run db:up` / `db:down` / `db:reset`      | local database                                 |
 
-## Testing
+## API
 
-- **Unit** (`tests/unit`): the validator against allowed queries and attack-style queries, error mapping, env parsing, the pipeline with a scripted fake model (repair loop, no retry on writes or timeouts, error details never reach the response, summary failure keeps the rows), chart selection, formatting and the eval comparator.
-- **Integration** (`tests/integration`, real Postgres): typed results, row-limit truncation, timeouts, and the read-only role on its own, with validation bypassed (writes fail even in a `READ WRITE` transaction, `rag` is not readable, `CREATE` is denied). Retrieval is tested end to end through pgvector with a deterministic keyword embedder, so no API key is needed.
+`POST /api/ask` with `{ "question": "How many customers are in each country?" }` (3 to 500 characters).
 
-## Evals
+The shape of a successful response (`200`), with rows shortened:
 
-`evals/cases.json` has 18 questions with reference SQL and 3 the pipeline must decline (out of scope, a write request, a prompt injection). Each question goes through the full pipeline, and the rows it returns are compared with the reference query's rows:
+```json
+{
+  "ok": true,
+  "answer": "One to three sentences written by the model.",
+  "sql": "SELECT country, count(*) AS customers FROM customers GROUP BY country ORDER BY customers DESC",
+  "explanation": "Counts customers per country.",
+  "result": {
+    "columns": [
+      { "name": "country", "kind": "text" },
+      { "name": "customers", "kind": "number" }
+    ],
+    "rows": [
+      ["United Arab Emirates", 107],
+      ["Germany", 104]
+    ],
+    "truncated": false
+  },
+  "chart": { "type": "bar", "x": 0, "y": [1] },
+  "meta": {
+    "model": "anthropic:claude-sonnet-5-5",
+    "retrieval": "vector",
+    "attempts": 1
+  }
+}
+```
 
-- column names and column order are ignored, extra columns are allowed, so `SELECT city, count(*)` matches a reference of `SELECT city`
-- row order only counts where the question asks for it
-- numbers are compared at two decimals
+A failure has `ok: false`, a `code` and a fixed `message`, plus the generated `sql` when there was one. Status codes: `400` bad input, `422` blocked, unanswerable or invalid query, `503` model or database unavailable or not configured, `504` timeout, `500` anything else. There is no authentication.
 
-The few-shot examples in `src/lib/retrieval/examples.ts` are deliberately different questions from the eval cases, so the eval measures generation rather than recall of the examples.
+## Data model
 
-`npm run eval` prints a pass/fail line per case, writes a JSON report to `evals/results/` (gitignored), and exits non-zero below 80% accuracy (`EVAL_MIN_ACCURACY`). CI always runs the `--reference` self-test, which checks the harness, the comparator and that every reference query passes the validator. Model evals run in CI only on `main` or a manual run, and only when an `ANTHROPIC_API_KEY` secret exists.
+All queryable tables live in the `shop` schema: `customers`, `orders` (status `pending`, `paid`, `shipped`, `delivered`, `cancelled` or `refunded`), `order_items` (quantity and the unit price actually paid), `products`, `categories` and `reviews` (1 to 5 stars). Revenue counts only paid, shipped and delivered orders; that rule lives in a table comment and in the prompt. The `rag.documents` table holds the embedded table descriptions and example questions.
 
-No model accuracy numbers are published here yet, because none have been recorded for this repo. Run `npm run eval` with a key to get them.
+## Testing and quality
 
-## Project layout
+| Suite                                              | What it covers                                                                                                                                                                                                                                                 | Last run                                                  |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Unit (`npm test`, 92 tests)                        | Validator against valid and attack-style SQL, error mapping, env parsing, the pipeline with a scripted model (repair loop, no retry on writes or timeouts, no error details leaked, summary failure keeps the rows), chart choice, formatting, eval comparator | Passed locally                                            |
+| Integration (`npm run test:integration`, 15 tests) | Typed results, row-limit truncation, timeouts, the read-only role with validation bypassed, schema introspection, pgvector retrieval with a deterministic embedder                                                                                             | Passed locally against Docker Postgres                    |
+| Eval self-test (`npm run eval -- --reference`)     | Harness, comparator, and that every reference query passes the validator                                                                                                                                                                                       | 21/21 locally                                             |
+| Model evals (`npm run eval`)                       | SQL generation accuracy with a real model                                                                                                                                                                                                                      | **Not run yet**: no API key was available                 |
+| Browser                                            | Every screen above, mobile width, light and dark themes, error states                                                                                                                                                                                          | Checked by hand in a browser with stubbed model responses |
+
+Lint, typecheck, format check and `next build` also pass locally. The CI workflow (`.github/workflows/ci.yml`) runs all of the above except model evals, which only run on `main` or a manual run when an `ANTHROPIC_API_KEY` secret is set. CI has not run yet because the repository has not been pushed.
+
+### How evals are scored
+
+Each question in `evals/cases.json` runs through the full pipeline and its rows are compared with the reference query's rows. Column names and order are ignored, extra columns are allowed (so `SELECT city, count(*)` matches a reference of `SELECT city`), row order only matters when the question asks for it, and numbers are compared at two decimals. The three refusal cases pass only if no rows come back. Few-shot examples are kept separate from eval questions so the score measures generation, not recall. `npm run eval` writes a JSON report to `evals/results/` and fails below 80% accuracy.
+
+## Project structure
 
 ```
 db/                    schema, deterministic seed, rag store, roles, init script
+docs/                  screenshots and demo video
 evals/                 eval cases, comparator, runner
 scripts/               index-knowledge.ts
 src/app/               page and POST /api/ask
 src/components/        question form, answer, table, chart, SQL block
-src/lib/ask.ts         the pipeline (no I/O of its own; dependencies are passed in)
+src/lib/ask.ts         the pipeline (dependencies passed in)
 src/lib/ask-service.ts wires the pipeline to the real database and model
 src/lib/sql/           validator, executor, error codes
 src/lib/retrieval/     pgvector retrieval and few-shot examples
 tests/                 unit and integration tests
 ```
 
-## Limitations
+## Deployment
 
-- No authentication or rate limiting. Anyone who can reach the server can spend model credits, so do not expose it publicly as is.
-- Single question and answer: no follow-up questions with conversational context.
-- The function allow-list covers common aggregate, window, date, text and math functions. A valid question that needs something else gets a repair attempt and then a "couldn't build a valid query" message.
-- `bigint` and `numeric` values are converted to JavaScript numbers for display and charts, which loses precision above 2^53.
-- Charts are line or bar only, chosen by a simple rule (date column gives a line, up to 30 categories give bars).
-- The summary is model-written from up to 50 rows. The table and SQL are the source of truth.
+There is no deployment yet. The app runs locally with Docker for Postgres. A Docker image with Kubernetes manifests for AWS is the next planned step.
 
-## Roadmap
+## Status and limitations
 
+Working locally end to end, with the model step verified only through tests and the reference model so far.
+
+- No authentication or rate limiting, so anyone who can reach it can spend model credits. Do not expose it publicly as is.
+- One question at a time; no follow-up questions that use earlier context.
+- A question that needs a function outside the allow-list gets one repair attempt, then a "couldn't build a valid query" message.
+- `bigint` and `numeric` values become JavaScript numbers, which loses precision above 2^53.
+- Charts are line or bar only.
+- The written summary sees at most 50 rows. The table and SQL are the source of truth.
+
+## Roadmap (planned, not built)
+
+- Run the model evals and publish accuracy per provider and model
 - Docker image and Kubernetes manifests, deployed on AWS
-- Record model eval results per provider and model
 - Rate limiting and an auth gate before any public deployment
+- Follow-up questions with conversation context
+
+## License
+
+No license has been chosen yet, so all rights are reserved by default.
+
+## Author
+
+Usama Khaki. [github.com/UsamaKhaki](https://github.com/UsamaKhaki)
