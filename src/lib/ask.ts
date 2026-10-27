@@ -65,6 +65,10 @@ export type AskResponse =
         model: string;
         retrieval: RetrievedContext["strategy"];
         attempts: number;
+        /** Time Postgres spent on the generated query. */
+        queryMs: number;
+        /** Whole pipeline, including model calls. */
+        totalMs: number;
       };
     }
   | { ok: false; code: FailureCode; message: string; sql?: string };
@@ -74,6 +78,7 @@ export async function answerQuestion(
   deps: AskDependencies,
 ): Promise<AskResponse> {
   let lastSql: string | undefined;
+  const startedAt = performance.now();
   try {
     const context = await deps.retrieve(question);
     const basePrompt = sqlPrompt(question, context);
@@ -100,7 +105,9 @@ export async function answerQuestion(
       if (validation.ok) {
         lastSql = validation.sql;
         try {
+          const queryStartedAt = performance.now();
           const result = await deps.execute(validation.sql);
+          const queryMs = Math.round(performance.now() - queryStartedAt);
           const answer = await summarize(
             deps.model,
             question,
@@ -118,6 +125,8 @@ export async function answerQuestion(
               model: deps.model.id,
               retrieval: context.strategy,
               attempts: attempt,
+              queryMs,
+              totalMs: Math.round(performance.now() - startedAt),
             },
           };
         } catch (error) {

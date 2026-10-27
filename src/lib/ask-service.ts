@@ -10,7 +10,7 @@ import { validateSql } from "./sql/validate";
 
 let catalogPromise: Promise<SchemaCatalog> | undefined;
 
-function getCatalog(): Promise<SchemaCatalog> {
+export function getCatalog(): Promise<SchemaCatalog> {
   // Cached for the life of the process; a failed load is retried next time.
   catalogPromise ??= loadCatalog(getReadonlyPool()).catch((error: unknown) => {
     catalogPromise = undefined;

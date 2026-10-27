@@ -1,50 +1,99 @@
 @import "tailwindcss";
 
+/*
+ * Blueprint paper: a cool ground, navy ink, and one amber "highlighter"
+ * reserved for the query receipt and focus. Charts reuse ink and amber so
+ * data and chrome read as one system.
+ */
 :root {
-  --surface: #fafaf9;
+  --surface: #eef1f6;
   --panel: #ffffff;
-  --ink: #1c1917;
-  --muted: #78716c;
-  --line: #e7e5e4;
-  --accent: #0f766e;
+  --sunken: #e4e9f1;
+  --ink: #14213d;
+  --muted: #5b6b86;
+  --line: #d5dce8;
+  --accent: #22408c;
   --accent-ink: #ffffff;
-  --danger: #b91c1c;
-  --chart-1: #0f766e;
-  --chart-2: #b45309;
-  --chart-3: #6d28d9;
+  --mark: #e0a100;
+  --mark-soft: #fff3cf;
+  --danger: #c2412d;
+  --chart-1: #22408c;
+  --chart-2: #e0a100;
+  --chart-3: #2a9d8f;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --surface: #0c0a09;
-    --panel: #1c1917;
-    --ink: #f5f5f4;
-    --muted: #a8a29e;
-    --line: #292524;
-    --accent: #2dd4bf;
-    --accent-ink: #042f2e;
-    --danger: #f87171;
-    --chart-1: #2dd4bf;
-    --chart-2: #fbbf24;
-    --chart-3: #a78bfa;
+    --surface: #0e1626;
+    --panel: #152036;
+    --sunken: #101a2d;
+    --ink: #e6ecf7;
+    --muted: #8b9bb8;
+    --line: #24324f;
+    --accent: #8fa8ff;
+    --accent-ink: #0e1626;
+    --mark: #f2b705;
+    --mark-soft: #2e2a1a;
+    --danger: #f08a78;
+    --chart-1: #8fa8ff;
+    --chart-2: #f2b705;
+    --chart-3: #5cc8b8;
   }
 }
 
 @theme inline {
   --color-surface: var(--surface);
   --color-panel: var(--panel);
+  --color-sunken: var(--sunken);
   --color-ink: var(--ink);
   --color-muted: var(--muted);
   --color-line: var(--line);
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
+  --color-mark: var(--mark);
+  --color-mark-soft: var(--mark-soft);
   --color-danger: var(--danger);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-plex-sans);
+  --font-display: var(--font-plex-condensed);
+  --font-mono: var(--font-plex-mono);
 }
 
 body {
   background: var(--surface);
   color: var(--ink);
-  font-family: var(--font-sans), system-ui, sans-serif;
+  font-family: var(--font-plex-sans), system-ui, sans-serif;
+}
+
+/* In the base layer so utilities such as focus:outline-none can override it. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--mark);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--mark-soft);
+  }
+}
+
+@keyframes scan {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+.working-bar {
+  animation: scan 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working-bar {
+    animation: none;
+  }
+  * {
+    scroll-behavior: auto !important;
+  }
 }

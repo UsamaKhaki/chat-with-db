@@ -65,7 +65,7 @@ export function ResultChart({
 
   return (
     <figure
-      className="h-72 w-full rounded-lg border border-line bg-panel p-3"
+      className="h-72 w-full"
       aria-label={`${chart.type} chart of ${series.map((s) => s.name).join(", ")} by ${xColumn.name}`}
     >
       <ResponsiveContainer width="100%" height="100%">
