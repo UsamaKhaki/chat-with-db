@@ -15,7 +15,8 @@
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "db:reset": "docker compose down -v && docker compose up -d --wait",
-    "index": "tsx --env-file-if-exists=.env.local scripts/index-knowledge.ts"
+    "index": "tsx --env-file-if-exists=.env.local scripts/index-knowledge.ts",
+    "eval": "tsx --env-file-if-exists=.env.local evals/run-evals.ts"
   },
   "dependencies": {
     "@langchain/anthropic": "^1.6.0",
