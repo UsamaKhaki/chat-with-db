@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  integration:
+    name: Database tests and eval harness
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg18
+        env:
+          POSTGRES_DB: chat_with_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5443:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d chat_with_db"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      # Throwaway credentials for the CI service container only.
+      CHAT_APP_PASSWORD: chat_app_ci
+      CHAT_READONLY_PASSWORD: chat_readonly_ci
+      DATABASE_URL: postgres://chat_app:chat_app_ci@localhost:5443/chat_with_db
+      READONLY_DATABASE_URL: postgres://chat_readonly:chat_readonly_ci@localhost:5443/chat_with_db
+      HAS_MODEL_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Create schema, seed data and roles
+        run: bash db/init.sh
+        env:
+          DB_SQL_DIR: db
+          PGHOST: localhost
+          PGPORT: "5443"
+          PGPASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: chat_with_db
+      - run: npm run test:integration
+      - name: Eval harness self-test (reference SQL, no API key)
+        run: npm run eval -- --reference
+      - name: Model evals
+        # Costs API credits, so only on main or when run by hand, and only
+        # when a key has been added as a repository secret.
+        if: env.HAS_MODEL_KEY == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+        run: npm run eval
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
