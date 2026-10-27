@@ -1,0 +1,25 @@
+# Local development database. The default passwords are for this local
+# container only; override them with environment variables if you like.
+services:
+  db:
+    image: pgvector/pgvector:0.8.7-pg18
+    environment:
+      POSTGRES_DB: chat_with_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      CHAT_APP_PASSWORD: ${CHAT_APP_PASSWORD:-chat_app_local}
+      CHAT_READONLY_PASSWORD: ${CHAT_READONLY_PASSWORD:-chat_readonly_local}
+    ports:
+      - "5443:5432"
+    volumes:
+      - ./db:/db:ro
+      - ./db/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d chat_with_db"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:
