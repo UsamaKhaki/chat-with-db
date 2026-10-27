@@ -5,6 +5,7 @@ describe("formatCell", () => {
   it("formats integers and decimals", () => {
     expect(formatCell(1918, "number")).toBe("1,918");
     expect(formatCell(1234.5678, "number")).toBe("1,234.57");
+    expect(formatCell(93455.8, "number")).toBe("93,455.80");
   });
 
   it("drops the time for midnight UTC dates", () => {

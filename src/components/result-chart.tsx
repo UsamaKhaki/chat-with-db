@@ -50,6 +50,7 @@ export function ResultChart({
   }));
   const tooltip = (
     <Tooltip
+      cursor={{ fill: "var(--line)", stroke: "var(--line)" }}
       contentStyle={{
         background: "var(--panel)",
         border: "1px solid var(--line)",

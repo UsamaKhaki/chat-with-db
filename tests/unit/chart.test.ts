@@ -40,6 +40,21 @@ describe("pickChart", () => {
     expect(pickChart(result)).toEqual({ type: "bar", x: 1, y: [2] });
   });
 
+  it("does not plot ids over time", () => {
+    const result = resultOf(
+      [
+        { name: "id", kind: "number" },
+        { name: "email", kind: "text" },
+        { name: "created_at", kind: "date" },
+      ],
+      [
+        [1, "a@example.com", "2024-01-01T10:00:00.000Z"],
+        [2, "b@example.com", "2024-02-01T10:00:00.000Z"],
+      ],
+    );
+    expect(pickChart(result)).toBeNull();
+  });
+
   it("skips single values, text-only results and long category lists", () => {
     const single = resultOf([{ name: "count", kind: "number" }], [[3000]]);
     const textOnly = resultOf(

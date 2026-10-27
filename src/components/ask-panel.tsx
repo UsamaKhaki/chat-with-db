@@ -45,7 +45,8 @@ export function AskPanel() {
       response = (await res.json()) as AskResponse;
     } catch (error) {
       if (controller.signal.aborted) return;
-      console.error(error);
+      // Handled below with a user-facing message; kept for debugging.
+      console.warn("ask request failed", error);
       response = {
         ok: false,
         code: "internal_error",
@@ -100,7 +101,7 @@ export function AskPanel() {
                 setQuestion(example);
                 void submit(example);
               }}
-              className="rounded-full border border-line px-3 py-1 text-sm text-muted transition-colors hover:border-accent hover:text-ink disabled:opacity-50"
+              className="rounded-full border border-line px-3 py-1 text-left text-sm text-muted transition-colors hover:border-accent hover:text-ink disabled:opacity-50"
             >
               {example}
             </button>

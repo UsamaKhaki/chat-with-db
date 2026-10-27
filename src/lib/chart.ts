@@ -18,24 +18,20 @@ const MAX_BARS = 30;
 export function pickChart({ columns, rows }: QueryResult): ChartSpec | null {
   if (rows.length < 2 || columns.length < 2) return null;
 
-  const numeric = columns.flatMap((column, index) =>
-    column.kind === "number" ? [index] : [],
-  );
-  const dateIndex = columns.findIndex((column) => column.kind === "date");
-  const textIndex = columns.findIndex((column) => column.kind === "text");
+  // Numeric id columns are identifiers, not measures, so they are never plotted.
+  const measures = columns
+    .flatMap((column, index) =>
+      column.kind === "number" && !/(^|_)id$/i.test(column.name) ? [index] : [],
+    )
+    .slice(0, MAX_SERIES);
+  if (measures.length === 0) return null;
 
-  if (dateIndex !== -1) {
-    const y = numeric
-      .filter((index) => index !== dateIndex)
-      .slice(0, MAX_SERIES);
-    if (y.length > 0) return { type: "line", x: dateIndex, y };
-  }
+  const dateIndex = columns.findIndex((column) => column.kind === "date");
+  if (dateIndex !== -1) return { type: "line", x: dateIndex, y: measures };
+
+  const textIndex = columns.findIndex((column) => column.kind === "text");
   if (textIndex !== -1 && rows.length <= MAX_BARS) {
-    // An id column next to a label is an identifier, not a measure.
-    const y = numeric
-      .filter((index) => !/(^|_)id$/i.test(columns[index].name))
-      .slice(0, MAX_SERIES);
-    if (y.length > 0) return { type: "bar", x: textIndex, y };
+    return { type: "bar", x: textIndex, y: measures };
   }
   return null;
 }

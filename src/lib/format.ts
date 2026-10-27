@@ -3,7 +3,9 @@ import type { CellValue, ColumnKind } from "./sql/execute";
 const integerFormat = new Intl.NumberFormat("en-GB", {
   maximumFractionDigits: 0,
 });
+// A fixed two decimals keeps money columns aligned (93,455.80, not 93,455.8).
 const decimalFormat = new Intl.NumberFormat("en-GB", {
+  minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
 const dateFormat = new Intl.DateTimeFormat("en-GB", {
